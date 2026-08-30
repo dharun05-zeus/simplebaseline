@@ -1,0 +1,24 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Checkpoint model weights (large binaries)
+checkpoints/*.pth
+checkpoints/*.pt
+*.pth
+*.pt
+
+# Test artifacts and CSV outputs
+*.csv
+temp/
+tmp/
+
+# Environments & IDEs
+.env
+.venv
+env/
+venv/
+.idea/
+.vscode/
+*.swp

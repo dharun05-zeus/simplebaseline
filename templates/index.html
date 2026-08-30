@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Human Pose Estimation - SimpleBaseline (Red & Black Edition)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-base: #060608;
+            --bg-card: #0e0e14;
+            --bg-card-hover: #14141c;
+            --bg-control: #12121a;
+            --border-color: rgba(255, 35, 65, 0.22);
+            --border-glow: rgba(255, 30, 60, 0.45);
+            --red-primary: #ff1e42;
+            --red-bright: #ff3355;
+            --red-deep: #b3001e;
+            --red-gradient: linear-gradient(135deg, #ff1744 0%, #c5002b 100%);
+            --red-glow: 0 0 20px rgba(255, 23, 68, 0.45);
+            --text-main: #f0f0f5;
+            --text-dim: #9292a4;
+            --text-red: #ff4766;
+            --green-active: #00ff88;
+            --font-display: 'Orbitron', -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-body: 'Rajdhani', -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-base);
+            background-image: 
+                radial-gradient(circle at 15% 15%, rgba(255, 20, 50, 0.06) 0%, transparent 40%),
+                radial-gradient(circle at 85% 85%, rgba(255, 0, 40, 0.05) 0%, transparent 40%),
+                linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+            background-size: 100% 100%, 100% 100%, 36px 36px, 36px 36px;
+            color: var(--text-main);
+            font-family: var(--font-body);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            padding: 20px 30px;
+            overflow-x: hidden;
+        }
+
+        /* Top Header */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid rgba(255, 35, 65, 0.2);
+        }
+
+        .header-title-group h1 {
+            font-family: var(--font-display);
+            font-size: 26px;
+            font-weight: 900;
+            letter-spacing: 2px;
+            background: linear-gradient(90deg, #ffffff 0%, #ff6680 60%, #ff1e42 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header-title-group p {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-dim);
+            letter-spacing: 0.8px;
+            margin-top: 4px;
+        }
+
+        .header-status-badge {
+            background: rgba(14, 14, 20, 0.85);
+            border: 1px solid rgba(255, 30, 60, 0.35);
+            box-shadow: 0 0 15px rgba(255, 20, 50, 0.15);
+            padding: 8px 16px;
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-main);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--green-active);
+            box-shadow: 0 0 10px var(--green-active);
+            animation: pulse-green 2s infinite;
+        }
+
+        @keyframes pulse-green {
+            0% { transform: scale(0.95); opacity: 0.8; }
+            50% { transform: scale(1.2); opacity: 1; filter: drop-shadow(0 0 4px var(--green-active)); }
+            100% { transform: scale(0.95); opacity: 0.8; }
+        }
+
+        /* Mode Switcher Tabs */
+        .mode-tabs-container {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 22px;
+        }
+
+        .mode-tab {
+            flex: 1;
+            padding: 13px 20px;
+            background: var(--bg-card);
+            border: 1px solid rgba(255, 35, 65, 0.2);
+            border-radius: 8px;
+            color: var(--text-dim);
+            font-family: var(--font-display);
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            text-transform: uppercase;
+        }
+
+        .mode-tab:hover {
+            background: var(--bg-card-hover);
+            border-color: rgba(255, 40, 70, 0.5);
+            color: var(--text-main);
+            box-shadow: 0 0 16px rgba(255, 20, 50, 0.2);
+        }
+
+        .mode-tab.active {
+            background: linear-gradient(180deg, rgba(255, 25, 60, 0.16) 0%, rgba(14, 14, 20, 0.95) 100%);
+            border: 1.5px solid var(--red-primary);
+            color: #ffffff;
+            box-shadow: var(--red-glow), inset 0 0 15px rgba(255, 30, 60, 0.2);
+        }
+
+        /* Main Content Layout */
+        .main-workspace {
+            display: grid;
+            grid-template-columns: 310px 1fr;
+            gap: 24px;
+            margin-bottom: 22px;
+            align-items: stretch;
+        }
+
+        /* Sidebar Controls */
+        .controls-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(8px);
+        }
+
+        .panel-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--font-display);
+            font-size: 14px;
+            font-weight: 800;
+            color: var(--text-red);
+            letter-spacing: 1.2px;
+            text-transform: uppercase;
+            padding-bottom: 8px;
+            border-bottom: 1px dashed rgba(255, 35, 65, 0.25);
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .control-label {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-dim);
+            letter-spacing: 0.5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .control-label span.value-badge {
+            font-family: var(--font-mono);
+            color: var(--red-bright);
+            font-weight: 700;
+        }
+
+        .select-input {
+            width: 100%;
+            background: var(--bg-control);
+            border: 1px solid rgba(255, 35, 65, 0.3);
+            border-radius: 6px;
+            color: var(--text-main);
+            font-family: var(--font-body);
+            font-size: 15px;
+            font-weight: 600;
+            padding: 10px 12px;
+            outline: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .select-input:focus {
+            border-color: var(--red-primary);
+            box-shadow: 0 0 10px rgba(255, 30, 60, 0.35);
+        }
+
+        /* Custom Red Range Slider */
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 6px;
+            background: #242432;
+            border-radius: 3px;
+            outline: none;
+            margin: 8px 0;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: var(--red-primary);
+            cursor: pointer;
+            box-shadow: 0 0 10px var(--red-primary);
+            transition: transform 0.1s ease;
+        }
+
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+
+        /* Toggle Checkbox */
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+
+        .switch input { opacity: 0; width: 0; height: 0; }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #262636;
+            transition: .3s;
+            border-radius: 24px;
+            border: 1px solid rgba(255, 35, 65, 0.25);
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: var(--red-primary);
+            box-shadow: 0 0 10px rgba(255, 30, 60, 0.5);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(20px);
+        }
+
+        /* Action Buttons */
+        .btn-action {
+            width: 100%;
+            padding: 13px 16px;
+            border: none;
+            border-radius: 8px;
+            font-family: var(--font-display);
+            font-size: 14px;
+            font-weight: 800;
+            letter-spacing: 1.2px;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            text-transform: uppercase;
+        }
+
+        .btn-primary {
+            background: var(--red-gradient);
+            color: #ffffff;
+            box-shadow: 0 4px 20px rgba(255, 23, 68, 0.4);
+        }
+
+        .btn-primary:hover {
+            filter: brightness(1.15);
+            box-shadow: 0 6px 28px rgba(255, 23, 68, 0.65);
+            transform: translateY(-1px);
+        }
+
+        .btn-primary:active {
+            transform: translateY(1px);
+        }
+
+        .btn-stop {
+            background: linear-gradient(135deg, #e50914 0%, #800010 100%);
+            box-shadow: 0 4px 20px rgba(229, 9, 20, 0.4);
+        }
+
+        /* Video Feed Display Screen */
+        .viewport-card {
+            background: #09090e;
+            border: 1px solid var(--border-glow);
+            border-radius: 12px;
+            overflow: hidden;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 480px;
+            box-shadow: 0 0 35px rgba(255, 20, 50, 0.12), inset 0 0 40px rgba(0, 0, 0, 0.8);
+        }
+
+        .video-container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #050508;
+        }
+
+        #liveVideo, #displayCanvas {
+            max-width: 100%;
+            max-height: 520px;
+            border-radius: 8px;
+            object-fit: contain;
+        }
+
+        #liveVideo {
+            display: none; /* hidden element for camera stream capture */
+        }
+
+        #displayCanvas {
+            display: block;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+        }
+
+        .canvas-overlay-tag {
+            position: absolute;
+            top: 14px;
+            left: 14px;
+            background: rgba(14, 14, 20, 0.85);
+            border: 1px solid var(--border-color);
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--red-bright);
+            letter-spacing: 0.8px;
+            pointer-events: none;
+            backdrop-filter: blur(6px);
+            z-index: 10;
+        }
+
+        /* Upload Container View */
+        .upload-view {
+            display: none;
+            width: 100%;
+            height: 100%;
+            padding: 30px;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .drop-zone {
+            width: 100%;
+            max-width: 580px;
+            height: 320px;
+            border: 2px dashed rgba(255, 35, 65, 0.4);
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            background: rgba(18, 18, 26, 0.5);
+        }
+
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: var(--red-bright);
+            background: rgba(255, 23, 68, 0.08);
+            box-shadow: 0 0 25px rgba(255, 23, 68, 0.25);
+        }
+
+        .drop-icon {
+            font-size: 48px;
+            color: var(--red-bright);
+        }
+
+        .drop-text {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        .drop-subtext {
+            font-size: 14px;
+            color: var(--text-dim);
+        }
+
+        /* Bottom Telemetry Bar (6 Metric Cards) */
+        .telemetry-grid {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 16px;
+        }
+
+        .telemetry-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+        }
+
+        .telemetry-card:hover {
+            border-color: rgba(255, 35, 65, 0.5);
+            box-shadow: 0 0 15px rgba(255, 20, 50, 0.18);
+            transform: translateY(-2px);
+        }
+
+        .telemetry-title {
+            font-family: var(--font-display);
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text-dim);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .telemetry-value {
+            font-family: var(--font-mono);
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text-main);
+            display: flex;
+            align-items: baseline;
+            gap: 4px;
+        }
+
+        .telemetry-value.red-accent {
+            color: var(--red-bright);
+            text-shadow: 0 0 10px rgba(255, 30, 60, 0.5);
+        }
+
+        .telemetry-value.green-accent {
+            color: var(--green-active);
+            text-shadow: 0 0 10px rgba(0, 255, 136, 0.4);
+        }
+
+        .telemetry-unit {
+            font-size: 12px;
+            color: var(--text-dim);
+            font-weight: 500;
+        }
+
+        @media (max-width: 1024px) {
+            .main-workspace { grid-template-columns: 1fr; }
+            .telemetry-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+
+        @media (max-width: 640px) {
+            body { padding: 12px; }
+            .telemetry-grid { grid-template-columns: repeat(2, 1fr); }
+            .mode-tabs-container { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header Section -->
+    <header>
+        <div class="header-title-group">
+            <h1>Human Pose Estimation</h1>
+            <p>17-Keypoint Top-Down Pose Estimation (COCO 17 Keypoints - SimpleBaseline ResNet-50)</p>
+        </div>
+        <div class="header-status-badge">
+            <div class="status-dot"></div>
+            <span id="hardwareBadge">NVIDIA GPU / CPU Ready</span>
+        </div>
+    </header>
+
+    <!-- Mode Tabs -->
+    <div class="mode-tabs-container">
+        <button class="mode-tab" id="tabUpload" onclick="switchMode('upload')">
+            <span>📁</span> Upload Image Mode
+        </button>
+        <button class="mode-tab active" id="tabCamera" onclick="switchMode('camera')">
+            <span>📷</span> Live Camera Mode
+        </button>
+    </div>
+
+    <!-- Main Workspace -->
+    <div class="main-workspace">
+        
+        <!-- Left Controls Sidebar -->
+        <aside class="controls-panel">
+            <div class="panel-header">
+                <span>🎛️</span> Webcam Controls
+            </div>
+
+            <!-- Model Selection -->
+            <div class="control-group">
+                <label class="control-label">Model Architecture:</label>
+                <select class="select-input" id="modelSelect">
+                    <option selected>SimpleBaseline (ResNet-50 + HeatmapHead)</option>
+                </select>
+            </div>
+
+            <!-- Confidence Slider -->
+            <div class="control-group">
+                <label class="control-label">
+                    Confidence Threshold:
+                    <span class="value-badge" id="threshValue">30%</span>
+                </label>
+                <input type="range" id="confSlider" min="5" max="95" value="30" oninput="updateThreshold(this.value)">
+            </div>
+
+            <!-- Flip Test Toggle -->
+            <div class="toggle-container">
+                <span class="control-label">Flip-Test (TTA Mode)</span>
+                <label class="switch">
+                    <input type="checkbox" id="flipToggle">
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <!-- Skeleton Overlay Toggle -->
+            <div class="toggle-container">
+                <span class="control-label">Render Skeleton Overlay</span>
+                <label class="switch">
+                    <input type="checkbox" id="renderToggle" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <!-- Start / Stop Button -->
+            <button class="btn-action btn-primary" id="btnToggleCamera" onclick="toggleCamera()">
+                <span>■</span> Stop Live Camera
+            </button>
+        </aside>
+
+        <!-- Main Display Viewport -->
+        <main class="viewport-card">
+            
+            <!-- Live Camera Screen -->
+            <div class="video-container" id="cameraContainer">
+                <div class="canvas-overlay-tag">
+                    <span id="detectionTag">ID: 1 (17 Keypoints)</span>
+                </div>
+                <video id="liveVideo" autoplay playsinline muted></video>
+                <canvas id="displayCanvas"></canvas>
+            </div>
+
+            <!-- Upload Screen -->
+            <div class="upload-view" id="uploadContainer">
+                <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+                    <div class="drop-icon">📤</div>
+                    <div class="drop-text">Drag & Drop Image or Click to Browse</div>
+                    <div class="drop-subtext">Supports PNG, JPG, JPEG, WEBP</div>
+                    <input type="file" id="fileInput" accept="image/*" style="display: none;" onchange="handleFileUpload(this.files[0])">
+                </div>
+            </div>
+
+        </main>
+
+    </div>
+
+    <!-- Bottom Telemetry HUD Bar -->
+    <footer class="telemetry-grid">
+        
+        <div class="telemetry-card">
+            <span class="telemetry-title">Live Measured FPS</span>
+            <div class="telemetry-value green-accent" id="fpsDisplay">
+                0 <span class="telemetry-unit">FPS</span>
+            </div>
+        </div>
+
+        <div class="telemetry-card">
+            <span class="telemetry-title">Inference Latency</span>
+            <div class="telemetry-value red-accent" id="infLatencyDisplay">
+                0.0 <span class="telemetry-unit">ms</span>
+            </div>
+        </div>
+
+        <div class="telemetry-card">
+            <span class="telemetry-title">HTTP Roundtrip</span>
+            <div class="telemetry-value" id="httpLatencyDisplay">
+                0.0 <span class="telemetry-unit">ms</span>
+            </div>
+        </div>
+
+        <div class="telemetry-card">
+            <span class="telemetry-title">Keypoint Count</span>
+            <div class="telemetry-value red-accent" id="kptCountDisplay">
+                17 <span class="telemetry-unit">pts</span>
+            </div>
+        </div>
+
+        <div class="telemetry-card">
+            <span class="telemetry-title">People Count</span>
+            <div class="telemetry-value" id="peopleCountDisplay">
+                1 <span class="telemetry-unit">pers</span>
+            </div>
+        </div>
+
+        <div class="telemetry-card">
+            <span class="telemetry-title">Memory Footprint</span>
+            <div class="telemetry-value" id="memoryDisplay">
+                136.0 <span class="telemetry-unit">MB</span>
+            </div>
+        </div>
+
+    </footer>
+
+    <!-- Client-side JavaScript -->
+    <script>
+        let currentMode = 'camera';
+        let isCameraRunning = false;
+        let videoStream = null;
+        let isProcessing = false;
+        let lastFrameTime = performance.now();
+        let frameCount = 0;
+        let fps = 0;
+
+        const video = document.getElementById('liveVideo');
+        const canvas = document.getElementById('displayCanvas');
+        const ctx = canvas.getContext('2d');
+        const offscreenCanvas = document.createElement('canvas');
+        const offscreenCtx = offscreenCanvas.getContext('2d');
+
+        // Fetch server status on start
+        fetch('/api/status')
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('hardwareBadge').textContent = `${data.device_name} Ready`;
+                document.getElementById('memoryDisplay').innerHTML = `${data.memory_mb} <span class="telemetry-unit">MB</span>`;
+            })
+            .catch(err => console.warn('Could not fetch server status:', err));
+
+        function switchMode(mode) {
+            currentMode = mode;
+            document.getElementById('tabCamera').classList.toggle('active', mode === 'camera');
+            document.getElementById('tabUpload').classList.toggle('active', mode === 'upload');
+
+            if (mode === 'camera') {
+                document.getElementById('cameraContainer').style.display = 'flex';
+                document.getElementById('uploadContainer').style.display = 'none';
+                if (!isCameraRunning) startCamera();
+            } else {
+                document.getElementById('cameraContainer').style.display = 'none';
+                document.getElementById('uploadContainer').style.display = 'flex';
+                stopCamera();
+            }
+        }
+
+        function updateThreshold(val) {
+            document.getElementById('threshValue').textContent = `${val}%`;
+        }
+
+        async function startCamera() {
+            try {
+                videoStream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }
+                });
+                video.srcObject = videoStream;
+                await video.play();
+
+                canvas.width = video.videoWidth || 640;
+                canvas.height = video.videoHeight || 480;
+                offscreenCanvas.width = canvas.width;
+                offscreenCanvas.height = canvas.height;
+
+                isCameraRunning = true;
+                const btn = document.getElementById('btnToggleCamera');
+                btn.innerHTML = `<span>■</span> Stop Live Camera`;
+                btn.className = 'btn-action btn-primary btn-stop';
+
+                requestAnimationFrame(processFrameLoop);
+            } catch (err) {
+                console.error('Error starting camera:', err);
+                alert('Could not access webcam: ' + err.message);
+                stopCamera();
+            }
+        }
+
+        function stopCamera() {
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => track.stop());
+                videoStream = null;
+            }
+            isCameraRunning = false;
+            const btn = document.getElementById('btnToggleCamera');
+            btn.innerHTML = `<span>▶</span> Start Live Camera`;
+            btn.className = 'btn-action btn-primary';
+        }
+
+        function toggleCamera() {
+            if (isCameraRunning) stopCamera();
+            else startCamera();
+        }
+
+        async function processFrameLoop() {
+            if (!isCameraRunning) return;
+
+            if (!isProcessing && video.readyState >= 2) {
+                isProcessing = true;
+                const t0 = performance.now();
+
+                // Draw video frame to offscreen canvas
+                offscreenCtx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const imageData = offscreenCanvas.toDataURL('image/jpeg', 0.85);
+
+                const thresh = parseFloat(document.getElementById('confSlider').value) / 100.0;
+                const flip = document.getElementById('flipToggle').checked;
+                const renderOverlay = document.getElementById('renderToggle').checked;
+
+                try {
+                    const res = await fetch('/api/predict_frame', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            image: imageData,
+                            score_thresh: thresh,
+                            flip_test: flip,
+                            render_overlay: renderOverlay
+                        })
+                    });
+
+                    const result = await res.json();
+                    const roundtrip = performance.now() - t0;
+
+                    if (result.annotated_image) {
+                        const img = new Image();
+                        img.onload = () => {
+                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                        };
+                        img.src = result.annotated_image;
+                    } else {
+                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    }
+
+                    // Update HUD telemetry
+                    document.getElementById('infLatencyDisplay').innerHTML = `${result.inference_ms} <span class="telemetry-unit">ms</span>`;
+                    document.getElementById('httpLatencyDisplay').innerHTML = `${roundtrip.toFixed(1)} <span class="telemetry-unit">ms</span>`;
+                    document.getElementById('kptCountDisplay').innerHTML = `${result.detected_count} <span class="telemetry-unit">pts</span>`;
+                    document.getElementById('peopleCountDisplay').innerHTML = `${result.people_count} <span class="telemetry-unit">pers</span>`;
+                    document.getElementById('detectionTag').textContent = `ID: 1 (${result.detected_count} Keypoints)`;
+
+                    // Compute FPS
+                    frameCount++;
+                    const now = performance.now();
+                    if (now - lastFrameTime >= 1000) {
+                        fps = Math.round((frameCount * 1000) / (now - lastFrameTime));
+                        document.getElementById('fpsDisplay').innerHTML = `${fps} <span class="telemetry-unit">FPS</span>`;
+                        frameCount = 0;
+                        lastFrameTime = now;
+                    }
+
+                } catch (err) {
+                    console.error('Frame processing failed:', err);
+                } finally {
+                    isProcessing = false;
+                }
+            }
+
+            requestAnimationFrame(processFrameLoop);
+        }
+
+        // Drag & Drop Upload
+        const dropZone = document.getElementById('dropZone');
+        ['dragenter', 'dragover'].forEach(name => {
+            dropZone.addEventListener(name, e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+        });
+        ['dragleave', 'drop'].forEach(name => {
+            dropZone.addEventListener(name, e => { e.preventDefault(); dropZone.classList.remove('dragover'); });
+        });
+        dropZone.addEventListener('drop', e => {
+            const files = e.dataTransfer.files;
+            if (files.length) handleFileUpload(files[0]);
+        });
+
+        async function handleFileUpload(file) {
+            if (!file) return;
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('score_thresh', parseFloat(document.getElementById('confSlider').value) / 100.0);
+            formData.append('flip_test', document.getElementById('flipToggle').checked);
+
+            const t0 = performance.now();
+            try {
+                const res = await fetch('/api/predict_upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await res.json();
+                const roundtrip = performance.now() - t0;
+
+                if (result.annotated_image) {
+                    const img = new Image();
+                    img.onload = () => {
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        ctx.drawImage(img, 0, 0);
+                        document.getElementById('cameraContainer').style.display = 'flex';
+                        document.getElementById('uploadContainer').style.display = 'none';
+                    };
+                    img.src = result.annotated_image;
+
+                    document.getElementById('infLatencyDisplay').innerHTML = `${result.inference_ms} <span class="telemetry-unit">ms</span>`;
+                    document.getElementById('httpLatencyDisplay').innerHTML = `${roundtrip.toFixed(1)} <span class="telemetry-unit">ms</span>`;
+                    document.getElementById('kptCountDisplay').innerHTML = `${result.detected_count} <span class="telemetry-unit">pts</span>`;
+                    document.getElementById('peopleCountDisplay').innerHTML = `${result.people_count} <span class="telemetry-unit">pers</span>`;
+                }
+            } catch (err) {
+                alert('Image upload processing failed: ' + err.message);
+            }
+        }
+
+        // Initialize on load
+        window.addEventListener('DOMContentLoaded', () => {
+            startCamera();
+        });
+    </script>
+</body>
+</html>
