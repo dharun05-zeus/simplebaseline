@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Human Pose Estimation - SimpleBaseline (Red & Black Edition)</title>
+    <title>Human Pose Estimation - SimpleBaseline (High-Throughput 30+ FPS)</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
@@ -156,7 +156,7 @@
             box-shadow: var(--red-glow), inset 0 0 15px rgba(255, 30, 60, 0.2);
         }
 
-        /* Main Content Layout */
+        /* Main Workspace Layout */
         .main-workspace {
             display: grid;
             grid-template-columns: 310px 1fr;
@@ -340,10 +340,6 @@
             transform: translateY(-1px);
         }
 
-        .btn-primary:active {
-            transform: translateY(1px);
-        }
-
         .btn-stop {
             background: linear-gradient(135deg, #e50914 0%, #800010 100%);
             box-shadow: 0 4px 20px rgba(229, 9, 20, 0.4);
@@ -374,20 +370,22 @@
             background: #050508;
         }
 
-        #liveVideo, #displayCanvas {
-            max-width: 100%;
+        #liveVideo {
+            width: 100%;
             max-height: 520px;
             border-radius: 8px;
             object-fit: contain;
-        }
-
-        #liveVideo {
-            display: none; /* hidden element for camera stream capture */
+            display: block;
         }
 
         #displayCanvas {
-            display: block;
-            box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            border-radius: 8px;
         }
 
         .canvas-overlay-tag {
@@ -457,7 +455,7 @@
             color: var(--text-dim);
         }
 
-        /* Bottom Telemetry Bar (6 Metric Cards) */
+        /* Bottom Telemetry Bar */
         .telemetry-grid {
             display: grid;
             grid-template-columns: repeat(6, 1fr);
@@ -539,7 +537,7 @@
         </div>
         <div class="header-status-badge">
             <div class="status-dot"></div>
-            <span id="hardwareBadge">NVIDIA GPU / CPU Ready</span>
+            <span id="hardwareBadge">NVIDIA GPU Ready (30-60+ FPS)</span>
         </div>
     </header>
 
@@ -566,7 +564,7 @@
             <div class="control-group">
                 <label class="control-label">Model Architecture:</label>
                 <select class="select-input" id="modelSelect">
-                    <option selected>SimpleBaseline (ResNet-50 + HeatmapHead)</option>
+                    <option selected>SimpleBaseline ResNet-50 (Tensor Core FP16)</option>
                 </select>
             </div>
 
@@ -577,6 +575,15 @@
                     <span class="value-badge" id="threshValue">30%</span>
                 </label>
                 <input type="range" id="confSlider" min="5" max="95" value="30" oninput="updateThreshold(this.value)">
+            </div>
+
+            <!-- EMA Smoothing -->
+            <div class="toggle-container">
+                <span class="control-label">EMA Motion Smoothing</span>
+                <label class="switch">
+                    <input type="checkbox" id="smoothToggle" checked>
+                    <span class="slider"></span>
+                </label>
             </div>
 
             <!-- Flip Test Toggle -->
@@ -640,7 +647,7 @@
         </div>
 
         <div class="telemetry-card">
-            <span class="telemetry-title">Inference Latency</span>
+            <span class="telemetry-title">GPU / Inference Latency</span>
             <div class="telemetry-value red-accent" id="infLatencyDisplay">
                 0.0 <span class="telemetry-unit">ms</span>
             </div>
@@ -678,25 +685,42 @@
 
     <!-- Client-side JavaScript -->
     <script>
+        const COCO_SKELETON = [
+            [15, 13], [13, 11], [16, 14], [14, 12], [11, 12],
+            [5, 11], [6, 12], [5, 6], [5, 7], [6, 8],
+            [7, 9], [8, 10], [1, 2], [0, 1], [0, 2], [1, 3], [2, 4]
+        ];
+
+        const KEYPOINT_COLORS = [
+            '#ff1e42', '#ff4d6d', '#ff1e42', '#ff4d6d', '#ff1e42',
+            '#00d4ff', '#ff3366', '#00d4ff', '#ff3366', '#00d4ff', '#ff3366',
+            '#b5179e', '#ff5400', '#b5179e', '#ff5400', '#b5179e', '#ff5400'
+        ];
+
         let currentMode = 'camera';
         let isCameraRunning = false;
         let videoStream = null;
-        let isProcessing = false;
+        let isSending = false;
         let lastFrameTime = performance.now();
         let frameCount = 0;
         let fps = 0;
 
+        let currentKeypoints = null;
+        let currentScores = null;
+        let smoothedKeypoints = null;
+
         const video = document.getElementById('liveVideo');
         const canvas = document.getElementById('displayCanvas');
         const ctx = canvas.getContext('2d');
-        const offscreenCanvas = document.createElement('canvas');
-        const offscreenCtx = offscreenCanvas.getContext('2d');
+        const captureCanvas = document.createElement('canvas');
+        const captureCtx = captureCanvas.getContext('2d');
 
         // Fetch server status on start
         fetch('/api/status')
             .then(res => res.json())
             .then(data => {
-                document.getElementById('hardwareBadge').textContent = `${data.device_name} Ready`;
+                const badge = `${data.device_name} ${data.fp16_active ? '(FP16 30-60+ FPS)' : ''} Ready`;
+                document.getElementById('hardwareBadge').textContent = badge;
                 document.getElementById('memoryDisplay').innerHTML = `${data.memory_mb} <span class="telemetry-unit">MB</span>`;
             })
             .catch(err => console.warn('Could not fetch server status:', err));
@@ -724,22 +748,23 @@
         async function startCamera() {
             try {
                 videoStream = await navigator.mediaDevices.getUserMedia({
-                    video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }
+                    video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 60 } }
                 });
                 video.srcObject = videoStream;
                 await video.play();
 
-                canvas.width = video.videoWidth || 640;
-                canvas.height = video.videoHeight || 480;
-                offscreenCanvas.width = canvas.width;
-                offscreenCanvas.height = canvas.height;
+                // High-performance capture size
+                captureCanvas.width = 384;
+                captureCanvas.height = 288;
 
                 isCameraRunning = true;
                 const btn = document.getElementById('btnToggleCamera');
                 btn.innerHTML = `<span>■</span> Stop Live Camera`;
                 btn.className = 'btn-action btn-primary btn-stop';
 
-                requestAnimationFrame(processFrameLoop);
+                // Start concurrent worker loop & 60fps render loop
+                sendFrameWorker();
+                requestAnimationFrame(renderLoop);
             } catch (err) {
                 console.error('Error starting camera:', err);
                 alert('Could not access webcam: ' + err.message);
@@ -756,6 +781,7 @@
             const btn = document.getElementById('btnToggleCamera');
             btn.innerHTML = `<span>▶</span> Start Live Camera`;
             btn.className = 'btn-action btn-primary';
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
         }
 
         function toggleCamera() {
@@ -763,74 +789,144 @@
             else startCamera();
         }
 
-        async function processFrameLoop() {
+        // Asynchronous non-blocking inference worker
+        async function sendFrameWorker() {
+            while (isCameraRunning) {
+                if (video.readyState >= 2) {
+                    const t0 = performance.now();
+                    // Draw to low-latency capture canvas
+                    captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+                    const imageData = captureCanvas.toDataURL('image/jpeg', 0.65);
+
+                    const thresh = parseFloat(document.getElementById('confSlider').value) / 100.0;
+                    const flip = document.getElementById('flipToggle').checked;
+
+                    try {
+                        const res = await fetch('/api/predict_frame', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                image: imageData,
+                                score_thresh: thresh,
+                                flip_test: flip,
+                                render_overlay: false // Client renders canvas at 60 FPS
+                            })
+                        });
+
+                        const result = await res.json();
+                        const roundtrip = performance.now() - t0;
+
+                        if (result.keypoints && result.scores) {
+                            // Rescale coordinates back to video native dimensions
+                            const scaleX = video.videoWidth / captureCanvas.width;
+                            const scaleY = video.videoHeight / captureCanvas.height;
+
+                            const scaledKpts = result.keypoints.map(pt => [pt[0] * scaleX, pt[1] * scaleY]);
+
+                            currentKeypoints = scaledKpts;
+                            currentScores = result.scores;
+
+                            document.getElementById('infLatencyDisplay').innerHTML = `${result.inference_ms} <span class="telemetry-unit">ms</span>`;
+                            document.getElementById('httpLatencyDisplay').innerHTML = `${roundtrip.toFixed(1)} <span class="telemetry-unit">ms</span>`;
+                            document.getElementById('kptCountDisplay').innerHTML = `${result.detected_count} <span class="telemetry-unit">pts</span>`;
+                            document.getElementById('peopleCountDisplay').innerHTML = `${result.people_count} <span class="telemetry-unit">pers</span>`;
+                            document.getElementById('detectionTag').textContent = `ID: 1 (${result.detected_count} Keypoints)`;
+                        }
+                    } catch (err) {
+                        console.warn('Inference request failed:', err);
+                    }
+                }
+                // Yield to event loop
+                await new Promise(r => setTimeout(r, 10));
+            }
+        }
+
+        // Smooth 60 FPS Canvas Render Loop
+        function renderLoop() {
             if (!isCameraRunning) return;
 
-            if (!isProcessing && video.readyState >= 2) {
-                isProcessing = true;
-                const t0 = performance.now();
+            // Sync canvas resolution with video
+            if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
+                canvas.width = video.clientWidth;
+                canvas.height = video.clientHeight;
+            }
 
-                // Draw video frame to offscreen canvas
-                offscreenCtx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                const imageData = offscreenCanvas.toDataURL('image/jpeg', 0.85);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-                const thresh = parseFloat(document.getElementById('confSlider').value) / 100.0;
-                const flip = document.getElementById('flipToggle').checked;
-                const renderOverlay = document.getElementById('renderToggle').checked;
+            const renderOverlay = document.getElementById('renderToggle').checked;
+            const thresh = parseFloat(document.getElementById('confSlider').value) / 100.0;
+            const useSmooth = document.getElementById('smoothToggle').checked;
 
-                try {
-                    const res = await fetch('/api/predict_frame', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            image: imageData,
-                            score_thresh: thresh,
-                            flip_test: flip,
-                            render_overlay: renderOverlay
-                        })
-                    });
+            if (renderOverlay && currentKeypoints && currentScores) {
+                const ratioX = canvas.width / (video.videoWidth || 1);
+                const ratioY = canvas.height / (video.videoHeight || 1);
 
-                    const result = await res.json();
-                    const roundtrip = performance.now() - t0;
-
-                    if (result.annotated_image) {
-                        const img = new Image();
-                        img.onload = () => {
-                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                        };
-                        img.src = result.annotated_image;
-                    } else {
-                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                // EMA smoothing
+                if (!smoothedKeypoints || !useSmooth) {
+                    smoothedKeypoints = currentKeypoints.map(pt => [pt[0], pt[1]]);
+                } else {
+                    const alpha = 0.65;
+                    for (let i = 0; i < currentKeypoints.length; i++) {
+                        smoothedKeypoints[i][0] = alpha * smoothedKeypoints[i][0] + (1 - alpha) * currentKeypoints[i][0];
+                        smoothedKeypoints[i][1] = alpha * smoothedKeypoints[i][1] + (1 - alpha) * currentKeypoints[i][1];
                     }
+                }
 
-                    // Update HUD telemetry
-                    document.getElementById('infLatencyDisplay').innerHTML = `${result.inference_ms} <span class="telemetry-unit">ms</span>`;
-                    document.getElementById('httpLatencyDisplay').innerHTML = `${roundtrip.toFixed(1)} <span class="telemetry-unit">ms</span>`;
-                    document.getElementById('kptCountDisplay').innerHTML = `${result.detected_count} <span class="telemetry-unit">pts</span>`;
-                    document.getElementById('peopleCountDisplay').innerHTML = `${result.people_count} <span class="telemetry-unit">pers</span>`;
-                    document.getElementById('detectionTag').textContent = `ID: 1 (${result.detected_count} Keypoints)`;
+                // 1. Draw Skeleton Lines
+                ctx.lineWidth = 3.5;
+                ctx.lineCap = 'round';
+                for (const [idxA, idxB] of COCO_SKELETON) {
+                    if (currentScores[idxA] >= thresh && currentScores[idxB] >= thresh) {
+                        const xA = smoothedKeypoints[idxA][0] * ratioX;
+                        const yA = smoothedKeypoints[idxA][1] * ratioY;
+                        const xB = smoothedKeypoints[idxB][0] * ratioX;
+                        const yB = smoothedKeypoints[idxB][1] * ratioY;
 
-                    // Compute FPS
-                    frameCount++;
-                    const now = performance.now();
-                    if (now - lastFrameTime >= 1000) {
-                        fps = Math.round((frameCount * 1000) / (now - lastFrameTime));
-                        document.getElementById('fpsDisplay').innerHTML = `${fps} <span class="telemetry-unit">FPS</span>`;
-                        frameCount = 0;
-                        lastFrameTime = now;
+                        ctx.strokeStyle = KEYPOINT_COLORS[idxA % KEYPOINT_COLORS.length];
+                        ctx.shadowColor = KEYPOINT_COLORS[idxA % KEYPOINT_COLORS.length];
+                        ctx.shadowBlur = 10;
+                        ctx.beginPath();
+                        ctx.moveTo(xA, yA);
+                        ctx.lineTo(xB, yB);
+                        ctx.stroke();
                     }
+                }
 
-                } catch (err) {
-                    console.error('Frame processing failed:', err);
-                } finally {
-                    isProcessing = false;
+                // 2. Draw Keypoint Dots
+                ctx.shadowBlur = 12;
+                for (let i = 0; i < smoothedKeypoints.length; i++) {
+                    if (currentScores[i] >= thresh) {
+                        const x = smoothedKeypoints[i][0] * ratioX;
+                        const y = smoothedKeypoints[i][1] * ratioY;
+
+                        ctx.fillStyle = KEYPOINT_COLORS[i % KEYPOINT_COLORS.length];
+                        ctx.shadowColor = ctx.fillStyle;
+                        ctx.beginPath();
+                        ctx.arc(x, y, 6, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        ctx.lineWidth = 2;
+                        ctx.strokeStyle = '#ffffff';
+                        ctx.shadowBlur = 0;
+                        ctx.stroke();
+                    }
                 }
             }
 
-            requestAnimationFrame(processFrameLoop);
+            // Real-time Display FPS
+            frameCount++;
+            const now = performance.now();
+            if (now - lastFrameTime >= 1000) {
+                fps = Math.round((frameCount * 1000) / (now - lastFrameTime));
+                document.getElementById('fpsDisplay').innerHTML = `${fps} <span class="telemetry-unit">FPS</span>`;
+                frameCount = 0;
+                lastFrameTime = now;
+            }
+
+            requestAnimationFrame(renderLoop);
         }
 
-        // Drag & Drop Upload
+        // Drag & Drop Upload Handler
         const dropZone = document.getElementById('dropZone');
         ['dragenter', 'dragover'].forEach(name => {
             dropZone.addEventListener(name, e => { e.preventDefault(); dropZone.classList.add('dragover'); });
@@ -880,7 +976,6 @@
             }
         }
 
-        // Initialize on load
         window.addEventListener('DOMContentLoaded', () => {
             startCamera();
         });

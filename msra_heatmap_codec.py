@@ -236,6 +236,78 @@ class MSRAHeatmap:
 
         return keypoints, scores
 
+    def decode_torch(
+        self, heatmaps: "torch.Tensor"
+    ) -> Tuple["torch.Tensor", "torch.Tensor"]:
+        """Vectorized PyTorch heatmap decoding with quarter-pixel refinement.
+
+        Operates directly on torch.Tensor (CUDA or CPU) with zero Python loops,
+        eliminating host-device memory transfers and CPU loop overhead.
+
+        Args:
+            heatmaps (torch.Tensor): Predicted heatmaps of shape (B, K, H, W) or (K, H, W).
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]:
+                - keypoints: Coordinates (x, y) of shape (B, K, 2) or (K, 2) in input space.
+                - scores: Confidence scores of shape (B, K) or (K,).
+        """
+        import torch
+
+        is_3d = heatmaps.dim() == 3
+        if is_3d:
+            heatmaps = heatmaps.unsqueeze(0)  # (1, K, H, W)
+
+        B, K, H, W = heatmaps.shape
+        flat = heatmaps.view(B, K, -1)
+        scores, idx = torch.max(flat, dim=-1)
+
+        loc_y = torch.div(idx, W, rounding_mode="floor").float()
+        loc_x = (idx % W).float()
+
+        x_int = torch.round(loc_x).long()
+        y_int = torch.round(loc_y).long()
+
+        hm_pad = torch.nn.functional.pad(heatmaps, (1, 1, 1, 1), mode="replicate")
+        y_pad = y_int + 1
+        x_pad_r = x_int + 2
+        x_pad_l = x_int
+        y_pad_d = y_int + 2
+        y_pad_u = y_int
+        x_pad_c = x_int + 1
+
+        b_idx = torch.arange(B, device=heatmaps.device).view(B, 1).expand(B, K)
+        k_idx = torch.arange(K, device=heatmaps.device).view(1, K).expand(B, K)
+
+        val_r = hm_pad[b_idx, k_idx, y_pad, x_pad_r]
+        val_l = hm_pad[b_idx, k_idx, y_pad, x_pad_l]
+        val_d = hm_pad[b_idx, k_idx, y_pad_d, x_pad_c]
+        val_u = hm_pad[b_idx, k_idx, y_pad_u, x_pad_c]
+
+        dx = val_r - val_l
+        dy = val_d - val_u
+
+        valid_x = (x_int >= 1) & (x_int < W - 1)
+        valid_y = (y_int >= 1) & (y_int < H - 1)
+
+        shift_x = torch.where(valid_x, 0.25 * torch.sign(dx), torch.zeros_like(dx))
+        shift_y = torch.where(valid_y, 0.25 * torch.sign(dy), torch.zeros_like(dy))
+
+        scale_x = float(self.scale_factor[0])
+        scale_y = float(self.scale_factor[1])
+
+        refined_x = (loc_x + shift_x) * scale_x
+        refined_y = (loc_y + shift_y) * scale_y
+
+        keypoints = torch.stack([refined_x, refined_y], dim=-1)
+
+        if is_3d:
+            keypoints = keypoints.squeeze(0)
+            scores = scores.squeeze(0)
+
+        return keypoints, scores
+
+
 
 if __name__ == "__main__":
     codec = MSRAHeatmap(input_size=(192, 256), heatmap_size=(48, 64), sigma=2.0)
