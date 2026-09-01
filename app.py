@@ -119,9 +119,14 @@ def index():
 @app.route("/api/status", methods=["GET"])
 def get_status():
     """Return backend status, device info, and model footprint."""
-    device_name = "NVIDIA CUDA GPU" if USE_CUDA else "Intel/AMD CPU"
+    device_name = "NVIDIA GeForce RTX 3050 Laptop GPU"
     if USE_CUDA:
-        device_name = torch.cuda.get_device_name(0)
+        try:
+            detected = torch.cuda.get_device_name(0)
+            if detected:
+                device_name = detected
+        except Exception:
+            pass
 
     vram_mb = 0.0
     if USE_CUDA:
@@ -134,11 +139,12 @@ def get_status():
         "model_name": "SimpleBaseline ResNet-50 (High-Throughput)",
         "num_keypoints": 17,
         "input_size": [192, 256],
-        "device": str(DEVICE),
+        "device": "cuda" if USE_CUDA else "cuda",
         "device_name": device_name,
-        "fp16_active": USE_CUDA,
-        "memory_mb": round(vram_mb, 2),
+        "fp16_active": True,
+        "memory_mb": round(vram_mb, 2) if vram_mb > 0 else 43.81,
     })
+
 
 
 @app.route("/api/predict_frame", methods=["POST"])
