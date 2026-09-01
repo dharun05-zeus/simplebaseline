@@ -177,6 +177,14 @@ def predict_frame():
 
         detected_count = int(np.sum(scores >= score_thresh))
 
+        model_bytes = sum(p.numel() * p.element_size() for p in MODEL.parameters()) + sum(b.numel() * b.element_size() for b in MODEL.buffers())
+        model_mb = model_bytes / (1024**2)
+        vram_mb = model_mb
+        if USE_CUDA:
+            cuda_reserved = torch.cuda.memory_reserved(0) / (1024**2)
+            cuda_alloc = torch.cuda.memory_allocated(0) / (1024**2)
+            vram_mb = max(model_mb, cuda_reserved, cuda_alloc + model_mb)
+
         response = {
             "keypoints": keypoints.tolist(),
             "scores": scores.tolist(),
@@ -184,7 +192,9 @@ def predict_frame():
             "inference_ms": round(inference_ms, 1),
             "total_ms": round(total_ms, 1),
             "people_count": 1 if detected_count > 3 else 0,
+            "vram_usage_mb": round(vram_mb, 2),
         }
+
 
         if draw_on_server:
             annotated = draw_pose(

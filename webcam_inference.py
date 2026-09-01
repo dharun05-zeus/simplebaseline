@@ -202,6 +202,21 @@ def draw_pose(
     return vis_frame
 
 
+def get_vram_usage(model: torch.nn.Module, device: torch.device) -> float:
+    """Calculate accurate VRAM memory footprint in megabytes (parameters + CUDA memory)."""
+    model_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
+    model_bytes += sum(b.numel() * b.element_size() for b in model.buffers())
+    model_mb = model_bytes / (1024**2)
+
+    if device.type == "cuda" and torch.cuda.is_available():
+        cuda_reserved = torch.cuda.memory_reserved(0) / (1024**2)
+        cuda_alloc = torch.cuda.memory_allocated(0) / (1024**2)
+        return round(max(model_mb, cuda_reserved, cuda_alloc + model_mb), 2)
+    else:
+        return round(model_mb, 2)
+
+
+
 def print_metrics_summary(metrics_log: List[Dict[str, float]], warmup_frames: int = 5) -> None:
     """Compute and print formatted summary table of performance metrics."""
     total_frames = len(metrics_log)
@@ -384,9 +399,10 @@ def main() -> None:
         assert scores.shape == (17,), f"Expected scores shape (17,), got {scores.shape}"
         assert annotated_frame.shape == test_frame.shape
 
-        vram_mb = torch.cuda.memory_allocated(0) / (1024**2) if use_cuda else 0.0
+        vram_mb = get_vram_usage(model, device)
         joints_identified = int(np.sum(scores >= args.score_thresh))
         people_detected = 1 if float(np.max(scores)) >= args.score_thresh else 0
+
 
         mock_log = [{
             "frame_idx": 1,
@@ -438,7 +454,7 @@ def main() -> None:
         keypoints, scores = postprocess_heatmaps(heatmaps, warp_mat, codec)
         annotated_frame = draw_pose(test_frame, keypoints, scores, COCO_SKELETON, args.score_thresh)
 
-        vram_mb = torch.cuda.memory_allocated(0) / (1024**2) if use_cuda else 0.0
+        vram_mb = get_vram_usage(model, device)
         joints_identified = int(np.sum(scores >= args.score_thresh))
         people_detected = 1 if float(np.max(scores)) >= args.score_thresh else 0
 
@@ -540,7 +556,8 @@ def main() -> None:
 
             joints_identified = int(np.sum(scores >= args.score_thresh))
             people_detected = 1 if float(np.max(scores)) >= args.score_thresh else 0
-            vram_usage_mb = torch.cuda.memory_allocated(0) / (1024**2) if use_cuda else 0.0
+            vram_usage_mb = get_vram_usage(model, device)
+
 
             metrics_log.append({
                 "frame_idx": frame_idx,

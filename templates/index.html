@@ -830,7 +830,11 @@
                             document.getElementById('httpLatencyDisplay').innerHTML = `${roundtrip.toFixed(1)} <span class="telemetry-unit">ms</span>`;
                             document.getElementById('kptCountDisplay').innerHTML = `${result.detected_count} <span class="telemetry-unit">pts</span>`;
                             document.getElementById('peopleCountDisplay').innerHTML = `${result.people_count} <span class="telemetry-unit">pers</span>`;
+                            if (result.vram_usage_mb) {
+                                document.getElementById('memoryDisplay').innerHTML = `${result.vram_usage_mb} <span class="telemetry-unit">MB</span>`;
+                            }
                             document.getElementById('detectionTag').textContent = `ID: 1 (${result.detected_count} Keypoints)`;
+
                         }
                     } catch (err) {
                         console.warn('Inference request failed:', err);
