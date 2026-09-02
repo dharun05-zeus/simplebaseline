@@ -258,10 +258,50 @@ class TestSimpleBaselineReplication(unittest.TestCase):
         pred_data = res_pred.get_json()
         self.assertIn('annotated_image', pred_data)
         self.assertIn('inference_ms', pred_data)
+        self.assertIn('fps', pred_data)
+
+    def test_12_web_fps_consistency(self):
+        """Test that web app FPS metric mathematically correlates with measured latency (1000 / total_ms)."""
+        import app
+        import base64
+        import cv2
+
+        client = app.app.test_client()
+        test_img = np.zeros((240, 320, 3), dtype=np.uint8)
+        _, buf = cv2.imencode('.jpg', test_img)
+        b64_str = base64.b64encode(buf).decode('utf-8')
+
+        N = 10
+        fps_list = []
+        for _ in range(N):
+            res = client.post(
+                '/api/predict_frame',
+                json={'image': f'data:image/jpeg;base64,{b64_str}', 'score_thresh': 0.3, 'render_overlay': False}
+            )
+            self.assertEqual(res.status_code, 200)
+            data = res.get_json()
+            self.assertIn('fps', data)
+            self.assertIn('total_ms', data)
+
+            fps = data['fps']
+            total_ms = data['total_ms']
+            expected_fps = 1000.0 / max(total_ms, 1.0)
+
+            # Assert mathematical consistency with total_ms
+            self.assertAlmostEqual(fps, expected_fps, delta=0.1)
+
+            # Assert fps is in sane range (catches stuck-at-zero or 144Hz repaint bugs)
+            self.assertGreater(fps, 1.0)
+            self.assertLess(fps, 1000.0)
+            fps_list.append(fps)
+
+        mean_fps = sum(fps_list) / len(fps_list)
+        print(f"\n[test_12_web_fps_consistency] Mean Web Pipeline FPS across {N} requests: {mean_fps:.1f} FPS")
 
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
 
 
 

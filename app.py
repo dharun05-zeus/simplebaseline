@@ -185,16 +185,18 @@ def predict_frame():
             cuda_alloc = torch.cuda.memory_allocated(0) / (1024**2)
             vram_mb = max(model_mb, cuda_reserved, cuda_alloc + model_mb)
 
+        fps = 1000.0 / max(total_ms, 1.0)
+
         response = {
             "keypoints": keypoints.tolist(),
             "scores": scores.tolist(),
             "detected_count": detected_count,
             "inference_ms": round(inference_ms, 1),
             "total_ms": round(total_ms, 1),
+            "fps": round(fps, 1),
             "people_count": 1 if detected_count > 3 else 0,
             "vram_usage_mb": round(vram_mb, 2),
         }
-
 
         if draw_on_server:
             annotated = draw_pose(
@@ -235,6 +237,7 @@ def predict_upload():
         )
 
         detected_count = int(np.sum(scores >= score_thresh))
+        fps = 1000.0 / max(total_ms, 1.0)
 
         annotated = draw_pose(
             frame_bgr,
@@ -254,8 +257,10 @@ def predict_upload():
             "detected_count": detected_count,
             "inference_ms": round(inference_ms, 1),
             "total_ms": round(total_ms, 1),
+            "fps": round(fps, 1),
             "people_count": 1 if detected_count > 3 else 0,
         })
+
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500

@@ -707,11 +707,11 @@
         let videoStream = null;
         let lastFrameTime = performance.now();
         let frameCount = 0;
-        let fps = 0;
-
-        let currentKeypoints = null;
+              let currentKeypoints = null;
         let currentScores = null;
         let smoothedKeypoints = null;
+        let lastResponseTime = 0;
+        let clientPipelineFps = 0;
 
         const video = document.getElementById('liveVideo');
         const canvas = document.getElementById('displayCanvas');
@@ -826,6 +826,24 @@
                             currentKeypoints = result.keypoints;
                             currentScores = result.scores;
 
+                            // Update telemetry metrics with backend-computed values
+                            if (result.fps !== undefined) {
+                                document.getElementById('fpsDisplay').innerHTML = `${result.fps.toFixed(1)} <span class="telemetry-unit">FPS</span>`;
+                            }
+
+                            // Client-side sanity check for divergence tracking
+                            const now = performance.now();
+                            if (lastResponseTime > 0) {
+                                const delta = now - lastResponseTime;
+                                const currentArrivalFps = 1000.0 / Math.max(delta, 1.0);
+                                clientPipelineFps = clientPipelineFps === 0 ? currentArrivalFps : (0.85 * clientPipelineFps + 0.15 * currentArrivalFps);
+
+                                if (result.fps && Math.abs(clientPipelineFps - result.fps) / result.fps > 0.20) {
+                                    console.warn(`FPS mismatch: backend=${result.fps}, client-observed=${clientPipelineFps.toFixed(1)}`);
+                                }
+                            }
+                            lastResponseTime = now;
+
                             document.getElementById('infLatencyDisplay').innerHTML = `${result.inference_ms} <span class="telemetry-unit">ms</span>`;
                             document.getElementById('httpLatencyDisplay').innerHTML = `${roundtrip.toFixed(1)} <span class="telemetry-unit">ms</span>`;
                             document.getElementById('kptCountDisplay').innerHTML = `${result.detected_count} <span class="telemetry-unit">pts</span>`;
@@ -834,7 +852,6 @@
                                 document.getElementById('memoryDisplay').innerHTML = `${result.vram_usage_mb} <span class="telemetry-unit">MB</span>`;
                             }
                             document.getElementById('detectionTag').textContent = `ID: 1 (${result.detected_count} Keypoints)`;
-
                         }
                     } catch (err) {
                         console.warn('Inference request failed:', err);
@@ -869,7 +886,7 @@
             return { vW, vH, offX, offY, renderW, renderH };
         }
 
-        // Smooth 60 FPS Canvas Render Loop
+        // Smooth Canvas Render Loop (UI drawing only - does not touch FPS telemetry)
         function renderLoop() {
             if (!isCameraRunning) return;
 
@@ -939,17 +956,9 @@
                 }
             }
 
-            // Real-time Display FPS
-            frameCount++;
-            const now = performance.now();
-            if (now - lastFrameTime >= 1000) {
-                fps = Math.round((frameCount * 1000) / (now - lastFrameTime));
-                document.getElementById('fpsDisplay').innerHTML = `${fps} <span class="telemetry-unit">FPS</span>`;
-                frameCount = 0;
-                lastFrameTime = now;
-            }
-
             requestAnimationFrame(renderLoop);
+        }
+nderLoop);
         }
 
         // Drag & Drop Upload Handler
