@@ -173,7 +173,7 @@
             padding: 20px;
             display: flex;
             flex-direction: column;
-            gap: 18px;
+            gap: 16px;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
             backdrop-filter: blur(8px);
         }
@@ -221,9 +221,9 @@
             border-radius: 6px;
             color: var(--text-main);
             font-family: var(--font-body);
-            font-size: 15px;
+            font-size: 14px;
             font-weight: 600;
-            padding: 10px 12px;
+            padding: 9px 12px;
             outline: none;
             cursor: pointer;
             transition: all 0.2s ease;
@@ -242,7 +242,7 @@
             background: #242432;
             border-radius: 3px;
             outline: none;
-            margin: 8px 0;
+            margin: 6px 0;
         }
 
         input[type="range"]::-webkit-slider-thumb {
@@ -265,7 +265,7 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 8px 0;
+            padding: 6px 0;
             border-top: 1px solid rgba(255, 255, 255, 0.05);
         }
 
@@ -312,7 +312,7 @@
         /* Action Buttons */
         .btn-action {
             width: 100%;
-            padding: 13px 16px;
+            padding: 12px 16px;
             border: none;
             border-radius: 8px;
             font-family: var(--font-display);
@@ -383,6 +383,14 @@
             display: block;
         }
 
+        #serverStreamImg {
+            width: 100%;
+            height: 100%;
+            max-height: 520px;
+            object-fit: contain;
+            display: none;
+        }
+
         #displayCanvas {
             position: absolute;
             top: 0;
@@ -408,6 +416,39 @@
             pointer-events: none;
             backdrop-filter: blur(6px);
             z-index: 10;
+        }
+
+        /* Camera Error Banner */
+        .camera-notice-banner {
+            position: absolute;
+            z-index: 25;
+            background: rgba(18, 12, 16, 0.95);
+            border: 1.5px solid var(--red-primary);
+            border-radius: 12px;
+            padding: 24px;
+            text-align: center;
+            max-width: 480px;
+            box-shadow: 0 0 35px rgba(255, 23, 68, 0.5);
+            backdrop-filter: blur(10px);
+        }
+
+        .camera-notice-title {
+            font-family: var(--font-display);
+            font-size: 18px;
+            font-weight: 800;
+            color: #fff;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .camera-notice-desc {
+            font-size: 14px;
+            color: var(--text-dim);
+            margin-bottom: 18px;
+            line-height: 1.4;
         }
 
         /* Upload Container View */
@@ -564,6 +605,15 @@
                 <span>🎛️</span> Webcam Controls
             </div>
 
+            <!-- Camera Source Selection -->
+            <div class="control-group">
+                <label class="control-label">Camera Source:</label>
+                <select class="select-input" id="cameraSourceSelect" onchange="changeCameraSource(this.value)">
+                    <option value="browser" selected>Browser Webcam (WebRTC)</option>
+                    <option value="server">Server OpenCV Camera (/video_feed)</option>
+                </select>
+            </div>
+
             <!-- Model Selection -->
             <div class="control-group">
                 <label class="control-label">Model Architecture:</label>
@@ -622,7 +672,25 @@
                 <div class="canvas-overlay-tag">
                     <span id="detectionTag">ID: 1 (17 Keypoints)</span>
                 </div>
+                
+                <!-- Notice Banner if Browser Permission Denied / Camera Busy -->
+                <div class="camera-notice-banner" id="cameraNoticeBanner" style="display: none;">
+                    <div class="camera-notice-title">⚠️ Camera Access Notice</div>
+                    <div class="camera-notice-desc" id="cameraNoticeText">
+                        Your browser blocked webcam access or the camera is being used by another application.
+                    </div>
+                    <div style="display: flex; gap: 12px; justify-content: center;">
+                        <button class="btn-action btn-primary" style="padding: 9px 16px; font-size: 13px;" onclick="startBrowserCamera()">
+                            🔄 Retry Browser Camera
+                        </button>
+                        <button class="btn-action btn-primary" style="padding: 9px 16px; font-size: 13px; background: #1a1a24; border: 1px solid #ff1744;" onclick="switchToHostCamera()">
+                            🎥 Use Server Camera
+                        </button>
+                    </div>
+                </div>
+
                 <video id="liveVideo" autoplay playsinline muted></video>
+                <img id="serverStreamImg" alt="Server Video Stream">
                 <canvas id="displayCanvas"></canvas>
             </div>
 
@@ -681,7 +749,7 @@
         <div class="telemetry-card">
             <span class="telemetry-title">VRAM Footprint</span>
             <div class="telemetry-value" id="memoryDisplay">
-                43.81 <span class="telemetry-unit">MB</span>
+                129.91 <span class="telemetry-unit">MB</span>
             </div>
         </div>
 
@@ -703,20 +771,22 @@
         ];
 
         let currentMode = 'camera';
+        let cameraSource = 'browser';
         let isCameraRunning = false;
         let videoStream = null;
-        let lastFrameTime = performance.now();
-        let frameCount = 0;
-              let currentKeypoints = null;
+
+        let currentKeypoints = null;
         let currentScores = null;
         let smoothedKeypoints = null;
         let lastResponseTime = 0;
         let clientPipelineFps = 0;
 
         const video = document.getElementById('liveVideo');
+        const serverImg = document.getElementById('serverStreamImg');
         const canvas = document.getElementById('displayCanvas');
         const ctx = canvas.getContext('2d');
         const container = document.getElementById('cameraContainer');
+        const noticeBanner = document.getElementById('cameraNoticeBanner');
 
         const captureCanvas = document.createElement('canvas');
         const captureCtx = captureCanvas.getContext('2d');
@@ -746,15 +816,57 @@
             }
         }
 
+        function changeCameraSource(src) {
+            cameraSource = src;
+            stopCamera();
+            startCamera();
+        }
+
+        function switchToHostCamera() {
+            document.getElementById('cameraSourceSelect').value = 'server';
+            noticeBanner.style.display = 'none';
+            changeCameraSource('server');
+        }
+
         function updateThreshold(val) {
             document.getElementById('threshValue').textContent = `${val}%`;
         }
 
         async function startCamera() {
+            noticeBanner.style.display = 'none';
+            if (cameraSource === 'server') {
+                startServerCamera();
+            } else {
+                await startBrowserCamera();
+            }
+        }
+
+        // 1. Browser WebRTC Camera Stream
+        async function startBrowserCamera() {
+            serverImg.style.display = 'none';
+            video.style.display = 'block';
+            canvas.style.display = 'block';
+
             try {
+                // Tier 1: Ideal 640x480 webcam constraint
                 videoStream = await navigator.mediaDevices.getUserMedia({
-                    video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 60 } }
+                    video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }
                 });
+            } catch (err1) {
+                console.warn('Tier 1 constraint failed, trying basic video constraint:', err1);
+                try {
+                    // Tier 2: Universal fallback constraint
+                    videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                } catch (err2) {
+                    console.error('Browser webcam access failed:', err2);
+                    document.getElementById('cameraNoticeText').textContent = 
+                        `Webcam access failed (${err2.name || 'Permission Denied'}). You can allow camera permissions or switch to the Server OpenCV Camera stream.`;
+                    noticeBanner.style.display = 'block';
+                    return;
+                }
+            }
+
+            try {
                 video.srcObject = videoStream;
                 await video.play();
 
@@ -766,10 +878,24 @@
                 sendFrameWorker();
                 requestAnimationFrame(renderLoop);
             } catch (err) {
-                console.error('Error starting camera:', err);
-                alert('Could not access webcam: ' + err.message);
-                stopCamera();
+                console.error('Error playing video stream:', err);
             }
+        }
+
+        // 2. Server OpenCV Stream
+        function startServerCamera() {
+            video.style.display = 'none';
+            canvas.style.display = 'none';
+            serverImg.style.display = 'block';
+
+            const thresh = parseFloat(document.getElementById('confSlider').value) / 100.0;
+            const flip = document.getElementById('flipToggle').checked;
+            serverImg.src = `/video_feed?score_thresh=${thresh}&flip_test=${flip}&t=${Date.now()}`;
+
+            isCameraRunning = true;
+            const btn = document.getElementById('btnToggleCamera');
+            btn.innerHTML = `<span>■</span> Stop Live Camera`;
+            btn.className = 'btn-action btn-primary btn-stop';
         }
 
         function stopCamera() {
@@ -777,6 +903,7 @@
                 videoStream.getTracks().forEach(track => track.stop());
                 videoStream = null;
             }
+            serverImg.src = '';
             isCameraRunning = false;
             const btn = document.getElementById('btnToggleCamera');
             btn.innerHTML = `<span>▶</span> Start Live Camera`;
@@ -791,7 +918,7 @@
 
         // Asynchronous frame inference worker with exact native aspect-ratio preservation
         async function sendFrameWorker() {
-            while (isCameraRunning) {
+            while (isCameraRunning && cameraSource === 'browser') {
                 if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
                     const t0 = performance.now();
 
@@ -888,7 +1015,7 @@
 
         // Smooth Canvas Render Loop (UI drawing only - does not touch FPS telemetry)
         function renderLoop() {
-            if (!isCameraRunning) return;
+            if (!isCameraRunning || cameraSource !== 'browser') return;
 
             if (canvas.width !== container.clientWidth || canvas.height !== container.clientHeight) {
                 canvas.width = container.clientWidth;
@@ -958,8 +1085,6 @@
 
             requestAnimationFrame(renderLoop);
         }
-nderLoop);
-        }
 
         // Drag & Drop Upload Handler
         const dropZone = document.getElementById('dropZone');
@@ -1001,6 +1126,9 @@ nderLoop);
                     };
                     img.src = result.annotated_image;
 
+                    if (result.fps !== undefined) {
+                        document.getElementById('fpsDisplay').innerHTML = `${result.fps.toFixed(1)} <span class="telemetry-unit">FPS</span>`;
+                    }
                     document.getElementById('infLatencyDisplay').innerHTML = `${result.inference_ms} <span class="telemetry-unit">ms</span>`;
                     document.getElementById('httpLatencyDisplay').innerHTML = `${roundtrip.toFixed(1)} <span class="telemetry-unit">ms</span>`;
                     document.getElementById('kptCountDisplay').innerHTML = `${result.detected_count} <span class="telemetry-unit">pts</span>`;

@@ -17,7 +17,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 import torch
-from flask import Flask, jsonify, render_template, request, send_file
+from flask import Flask, Response, jsonify, render_template, request, send_file
+
 from PIL import Image
 
 from load_pretrained_weights import DEFAULT_CACHE_PATH, load_pretrained
@@ -114,6 +115,38 @@ def run_inference_on_frame(
 def index():
     """Render main application interface."""
     return render_template("index.html")
+
+
+@app.route("/video_feed")
+def video_feed():
+    """Direct MJPEG video stream from host OpenCV camera with real-time pose estimation."""
+    def generate_frames():
+        cap = cv2.VideoCapture(0)
+        score_thresh = float(request.args.get("score_thresh", 0.3))
+        flip_test = request.args.get("flip_test", "false").lower() == "true"
+        try:
+            while True:
+                success, frame = cap.read()
+                if not success or frame is None:
+                    time.sleep(0.01)
+                    continue
+
+                keypoints, scores, _, _ = run_inference_on_frame(
+                    frame, score_thresh=score_thresh, flip_test=flip_test
+                )
+                annotated = draw_pose(
+                    frame, keypoints, scores, COCO_SKELETON, score_thresh=score_thresh
+                )
+                ret, buffer = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                if not ret:
+                    continue
+                yield (b"--frame\r\n"
+                       b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n")
+        finally:
+            cap.release()
+
+    return Response(generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
 
 
 @app.route("/api/status", methods=["GET"])
